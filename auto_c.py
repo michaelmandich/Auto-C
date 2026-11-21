@@ -71,13 +71,16 @@ def capture_rate(device):
     raise ValueError("Microphone needs mono PCM at 8, 16, 32, or 48 kHz. Try --list-devices.")
 
 
-def listen(args, stopping, on_status=None, get_threshold=None):
+def listen(args, stopping, on_status=None, get_threshold=None, is_enabled=None):
     mic = sd.query_devices(args.device, "input")
     rate = capture_rate(mic["index"])
     key = None if args.dry_run else LeagueKey()
     gate = VoiceGate(args.threshold)
     frames = queue.Queue(maxsize=8)
     sequence = 0
+
+    def enabled():
+        return args.dry_run or (is_enabled is not None and is_enabled())
 
     def on_audio(data, count, timing, status):
         nonlocal sequence
@@ -87,7 +90,7 @@ def listen(args, stopping, on_status=None, get_threshold=None):
         except queue.Full:
             pass  # A gap in sequence resets the gate before fresh audio is used.
 
-    mode = "Mic test (no keys sent)" if args.dry_run else "Live (C enabled in the League match window)"
+    mode = "Mic test (no keys sent)" if args.dry_run else "Live (manually enabled)"
     if on_status is None:
         print(f"{mode}\nMicrophone: {mic['name']} | Threshold: {args.threshold:g} dBFS | Ctrl+C to stop.",
               flush=True)
@@ -107,7 +110,7 @@ def listen(args, stopping, on_status=None, get_threshold=None):
                     age = time.monotonic() - last_audio
                     if age > 2 or not stream.active:
                         raise RuntimeError("Microphone stopped delivering audio. Check the device and restart Auto-C.")
-                    if age < 0.25 and (key is None or not key.held or key.eligible()):
+                    if age < 0.25 and (key is None or not key.held or (enabled() and key.eligible())):
                         continue
                     frame = None
                 else:
@@ -116,7 +119,8 @@ def listen(args, stopping, on_status=None, get_threshold=None):
                         frame = None
                     previous = number
 
-                eligible = key is None or key.eligible()
+                armed = enabled()
+                eligible = armed and (key is None or key.eligible())
                 if frame is None or not eligible:
                     if gate.active or gate.speech_frames:
                         gate.reset()
@@ -132,7 +136,12 @@ def listen(args, stopping, on_status=None, get_threshold=None):
 
                 if key is not None:
                     key.set_down(talking)
-                    state = "key_down" if key.held else ("ready" if eligible else "waiting")
+                    if not armed:
+                        state = "off"
+                    elif not eligible:
+                        state = "key_busy"
+                    else:
+                        state = "key_down" if key.held else "ready"
                 else:
                     state = "test_speech" if talking else "test_quiet"
                 if on_status is not None:
@@ -183,7 +192,7 @@ def main():
                 if mic["max_input_channels"]:
                     host = sd.query_hostapis(mic["hostapi"])["name"]
                     print(f"{mic['index']:3}  {mic['name']} ({host})")
-        elif args.display:
+        elif args.display or not args.dry_run:
             from mini_display import run_display
             return run_display(args)
         else:

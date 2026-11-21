@@ -1,18 +1,18 @@
 # Auto-C
 
-Auto-C listens to your microphone on Windows and holds **C** while you speak in a League of Legends match. League handles the voice call. Auto-C processes microphone frames locally and discards them as it goes.
+Auto-C listens to your microphone on Windows and holds **C** while you speak. A button on the second-monitor display lets you enable voice activation in the League lobby, in a match, or in another app. Audio is processed locally.
 
-![Auto-C mini display showing the live microphone level and activation threshold while waiting for a League match](docs/mini-display.jpg)
+![Auto-C mini display with its on/off control, microphone level and activation threshold](docs/mini-display.jpg)
 
 ## Play
 
 1. On Windows 10 or 11, install Python 3 with the Windows Python launcher (`py`) and Tkinter. Download the repository using **Code → Download ZIP**, extract it, and open the folder. Python 3.10 x64 was used for testing.
 2. In League, enable **Team Voice** and confirm its push-to-talk binding is **C**. Riot preserves bindings you previously customized. [Patch 26.23 notes](https://www.leagueoflegends.com/en-us/news/game-updates/league-of-legends-patch-26-23-notes/)
 3. Double-click **Auto-C.cmd**. On first launch it installs the dependencies. The always-on-top mini display opens in the upper-right corner of your second monitor, or on the main monitor when only one is connected. Drag its title bar to move it.
-4. Speak with the match window focused. The **C** indicator turns green when Auto-C holds the key. It activates after two consecutive 20 ms speech frames and releases after 300 ms of quiet. Switching windows also releases C.
-5. Close the mini display to stop listening and release the key.
+4. Auto-C starts **Off**. Click **Turn on**, then use the lobby, game, or app where you want C to go. The **C** indicator turns green after two consecutive 20 ms speech frames and the key releases after 300 ms of quiet.
+5. Click **Turn off** to release C and pause keypresses. The microphone meter stays live so you can tune the threshold. Closing the panel also releases C and stops the microphone.
 
-The key is enabled only in the foreground match executable, so champion select is outside its scope. In-game text chat shares the match window and can receive C if you speak while typing.
+While On, speech sends C to whichever window is active, including text fields. Turn it off when you want to type. To use it with friends in the regular lobby, set **Party Voice** to push-to-talk and bind its key to **C**. **Team Voice** becomes available in champion select. [League voice settings](https://support.riotgames.com/en-us/league-of-legends/gameplay/league-voice)
 
 ## Tune the microphone
 

@@ -1,9 +1,8 @@
-"""Hold the C key for push-to-talk while the League match is in the foreground."""
+"""Hold the C key for push-to-talk in the active Windows application."""
 
 import ctypes
 from ctypes import wintypes
 from contextlib import contextmanager
-import ntpath
 import os
 
 
@@ -73,15 +72,9 @@ class LeagueKey:
         if os.name != "nt":
             raise OSError("League push-to-talk requires Windows.")
         user32 = ctypes.WinDLL("user32", use_last_error=True)
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         self._foreground = _bind(user32, "GetForegroundWindow", wintypes.HWND)
-        self._get_pid = _bind(user32, "GetWindowThreadProcessId", wintypes.DWORD,
-                              wintypes.HWND, wintypes.LPDWORD)
-        self._open = _bind(kernel32, "OpenProcess", wintypes.HANDLE, wintypes.DWORD,
-                           wintypes.BOOL, wintypes.DWORD)
-        self._image_name = _bind(kernel32, "QueryFullProcessImageNameW", wintypes.BOOL,
-                                 wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, wintypes.LPDWORD)
-        self._close = _bind(kernel32, "CloseHandle", wintypes.BOOL, wintypes.HANDLE)
+        self._thread_id = _bind(user32, "GetWindowThreadProcessId", wintypes.DWORD,
+                                wintypes.HWND, wintypes.LPDWORD)
         self._key_state = _bind(user32, "GetAsyncKeyState", wintypes.SHORT, ctypes.c_int)
         self._layout = _bind(user32, "GetKeyboardLayout", wintypes.HKL, wintypes.DWORD)
         self._map_key = _bind(user32, "MapVirtualKeyExW", wintypes.UINT, wintypes.UINT,
@@ -98,23 +91,8 @@ class LeagueKey:
         if not self.held and any(self._key_state(vk) & 0x8000 for vk in (*self._MODIFIERS, self._C)):
             return None
         window = self._foreground()
-        pid = wintypes.DWORD()
-        thread = self._get_pid(window, ctypes.byref(pid)) if window else 0
-        if not thread:
-            return None
-        process = self._open(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not process:
-            return None
-        try:
-            path = ctypes.create_unicode_buffer(32768)
-            length = wintypes.DWORD(len(path))
-            if not self._image_name(process, 0, path, ctypes.byref(length)):
-                return None
-            if ntpath.basename(path.value).casefold() == "league of legends.exe" and window == self._foreground():
-                return window, thread
-            return None
-        finally:
-            self._close(process)
+        thread = self._thread_id(window, None) if window else 0
+        return (window, thread) if thread else None
 
     def eligible(self) -> bool:
         return self._target() is not None
@@ -133,7 +111,7 @@ class LeagueKey:
             if window != self._foreground():
                 return
             if not scan:
-                raise OSError("Windows could not map C in the League window's keyboard layout.")
+                raise OSError("Windows could not map C in the active window's keyboard layout.")
         event = _Input()
         event.type = 1  # INPUT_KEYBOARD
         event.data.ki.wScan = scan & 0xFF

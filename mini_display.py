@@ -19,9 +19,10 @@ TEST = "#b7a4ff"
 # Title, supporting text, keycap background, keycap foreground.
 STATES = {
     "starting": ("Starting microphone", "Opening the input device…", PANEL, MUTED),
-    "waiting": ("Waiting for League", "Focus the League window to enable C.", PANEL, MUTED),
-    "ready": ("Listening", "C is up. Speak to open Team Voice.", "#19353a", METER),
-    "key_down": ("Talking", "C is held for Team Voice.", "#89e6b4", "#093722"),
+    "off": ("Off", "Voice-activated C is paused.", PANEL, MUTED),
+    "ready": ("Listening", "Speak to hold C for push-to-talk.", "#19353a", METER),
+    "key_down": ("Talking", "C is held for push-to-talk.", "#89e6b4", "#093722"),
+    "key_busy": ("Shortcut held", "Release the shortcut to resume.", "#463828", THRESHOLD),
     "test_quiet": ("Listening", "Microphone test · Keys disabled", "#312b43", TEST),
     "test_speech": ("Speech detected", "Microphone test · Keys disabled", TEST, "#231b36"),
     "error": ("Auto-C stopped", "", "#442a30", "#f4a3a6"),
@@ -31,7 +32,7 @@ STATES = {
 def run_display(args):
     """Run the display until closed. The capture thread owns the microphone and key."""
     root = tk.Tk()
-    root.title("Auto-C · Microphone test" if args.dry_run else "Auto-C · League Team Voice")
+    root.title("Auto-C · Microphone test" if args.dry_run else "Auto-C · Voice activation")
     root.configure(bg=BG)
     root.resizable(False, False)
     root.attributes("-topmost", True)
@@ -112,6 +113,25 @@ def run_display(args):
     raise_button = tk.Button(controls, text="+", command=lambda: adjust_threshold(1), **button_style)
     raise_button.pack(side="left")
 
+    enabled = threading.Event()
+    toggle = None
+    if not args.dry_run:
+        def toggle_live():
+            if enabled.is_set():
+                enabled.clear()
+                toggle.configure(text="Turn on")
+            else:
+                enabled.set()
+                toggle.configure(text="Turn off")
+
+        live_controls = tk.Frame(body, bg=BG)
+        live_controls.pack(fill="x", pady=(9, 0))
+        tk.Label(live_controls, text="When on, C goes to the active window.", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 9), anchor="w", justify="left", wraplength=197).pack(side="left")
+        toggle = tk.Button(live_controls, text="Turn on", command=toggle_live, **button_style)
+        toggle.configure(width=8, bg="#19353a", fg=METER)
+        toggle.pack(side="right")
+
     def show_state(state):
         headline, subtitle, background, ink = STATES[state]
         title.configure(text=headline)
@@ -149,7 +169,8 @@ def run_display(args):
     def capture():
         nonlocal failure
         try:
-            listen(args, stop.is_set, on_status=on_status, get_threshold=get_threshold)
+            listen(args, stop.is_set, on_status=on_status, get_threshold=get_threshold,
+                   is_enabled=enabled.is_set)
         except Exception as error:
             failure = str(error) or type(error).__name__
 
@@ -164,6 +185,9 @@ def run_display(args):
                 root.destroy()
             else:
                 show_state("error")
+                enabled.clear()
+                if toggle is not None:
+                    toggle.configure(text="Turn on", state="disabled")
                 lower.configure(state="disabled")
                 raise_button.configure(state="disabled")
                 detail.configure(text=failure, wraplength=max(160, copy.winfo_width()), justify="left")
@@ -178,11 +202,18 @@ def run_display(args):
         draw_level(level)
         root.after(40, refresh)
 
-    root.protocol("WM_DELETE_WINDOW", stop.set)
+    def request_stop():
+        stop.set()
+        enabled.clear()
+        if toggle is not None:
+            toggle.configure(text="Turn on", state="disabled")
+
+    root.protocol("WM_DELETE_WINDOW", request_stop)
     root.after(0, refresh)
     try:
         root.mainloop()
     finally:
         stop.set()
+        enabled.clear()
         worker.join()
     return 1 if failure is not None else 0
