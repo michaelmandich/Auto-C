@@ -29,7 +29,7 @@ class FakeKey:
         self.held = down and not (self.refuse_first and self.down_attempts == 1)
 
 
-def replay(audio, key=None):
+def replay(audio, key=None, get_threshold=None):
     """Deliver exactly one PCM frame before each monitor iteration."""
     frames = iter(audio)
     reports = []
@@ -49,7 +49,10 @@ def replay(audio, key=None):
             stream.call_args.kwargs["callback"](frame, SAMPLES, None, False)
             return False
 
-        auto_c.listen(args, stopping, lambda state, dbfs: reports.append((state, dbfs)))
+        auto_c.listen(args, stopping, lambda state, dbfs: reports.append((state, dbfs)),
+                      get_threshold=get_threshold)
+        stream.assert_called_once()
+        stream.return_value.__enter__.assert_called_once_with()
         if args.dry_run:
             create_key.assert_not_called()
     return reports
@@ -70,6 +73,19 @@ class MonitorStatusTests(unittest.TestCase):
         self.assertEqual([state for state, _ in reports], ["ready", "ready", "key_down"])
         self.assertEqual(key.down_attempts, 2)
         self.assertFalse(key.held)
+
+    def test_threshold_changes_while_listening_with_constant_input(self):
+        threshold = -3
+
+        def audio():
+            nonlocal threshold
+            # LOUD stays at -6 dBFS throughout these three threshold settings.
+            for threshold, frames in [(-3, 4), (-15, 2), (-3, 15)]:
+                yield from [LOUD] * frames
+
+        reports = replay(audio(), FakeKey(), get_threshold=lambda: threshold)
+        self.assertEqual([state for state, _ in reports],
+                         ["ready"] * 5 + ["key_down"] * 15 + ["ready"])
 
     def test_dry_run_reports_speech_and_quiet_without_creating_a_key(self):
         reports = replay([LOUD, LOUD] + [SILENCE] * 15)

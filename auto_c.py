@@ -11,6 +11,7 @@ from contextlib import nullcontext
 import sounddevice as sd
 import webrtcvad
 
+from threshold_settings import DEFAULT_THRESHOLD, MAX_THRESHOLD, MIN_THRESHOLD, load_threshold
 from win_ptt import LeagueKey, live_session
 
 
@@ -27,10 +28,15 @@ def decibels(power):
 
 
 class VoiceGate:
-    def __init__(self, threshold_db=-45.0, release_ms=300):
-        self.min_power = (32768 * 10 ** (threshold_db / 20)) ** 2
+    def __init__(self, threshold_db=DEFAULT_THRESHOLD, release_ms=300):
         self.release_ms = release_ms
         self.reset()
+        self.set_threshold(threshold_db)
+
+    def set_threshold(self, threshold_db):
+        self.threshold_db = threshold_db
+        self.min_power = (32768 * 10 ** (threshold_db / 20)) ** 2
+        self.speech_frames = 0
 
     def reset(self):
         self.vad = webrtcvad.Vad(2)
@@ -65,7 +71,7 @@ def capture_rate(device):
     raise ValueError("Microphone needs mono PCM at 8, 16, 32, or 48 kHz. Try --list-devices.")
 
 
-def listen(args, stopping, on_status=None):
+def listen(args, stopping, on_status=None, get_threshold=None):
     mic = sd.query_devices(args.device, "input")
     rate = capture_rate(mic["index"])
     key = None if args.dry_run else LeagueKey()
@@ -117,6 +123,10 @@ def listen(args, stopping, on_status=None):
                     talking = False
                     power = frame_power(frame) if on_status and frame is not None else 0.0
                 else:
+                    if get_threshold is not None:
+                        threshold_db = get_threshold()
+                        if threshold_db != gate.threshold_db:
+                            gate.set_threshold(threshold_db)
                     talking = gate.update(frame, rate)
                     power = gate.power
 
@@ -147,12 +157,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--display", action="store_true", help="open the mini microphone display")
     parser.add_argument("--dry-run", action="store_true", help="show mic levels and C transitions without sending keys")
-    parser.add_argument("--threshold", type=float, default=-45, metavar="DBFS",
-                        help="minimum speech level, from -96 to 0 dBFS (default -45)")
+    parser.add_argument("--threshold", type=float, metavar="DBFS",
+                        help="initial speech threshold from -96 to 0 dBFS (default: saved setting or -45)")
     parser.add_argument("--list-devices", action="store_true", help="show microphone IDs and exit")
     parser.add_argument("--device", type=int, metavar="ID", help="microphone ID (default: Windows default input)")
     args = parser.parse_args()
-    if not -96 <= args.threshold <= 0:
+    if args.threshold is None:
+        args.threshold = load_threshold()
+    elif not MIN_THRESHOLD <= args.threshold <= MAX_THRESHOLD:
         parser.error("--threshold must be between -96 and 0 dBFS")
 
     # Handle Ctrl+C between frames so it can't interrupt ownership of a key-down.

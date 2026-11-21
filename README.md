@@ -18,7 +18,9 @@ The key is enabled only in the foreground match executable, so champion select i
 
 Double-click **Test microphone.cmd**. Speak normally, then pause. The purple **MIC** indicator shows when the detector hears speech. The meter shows the microphone level and the gold marker shows the threshold. Test mode sends no keys.
 
-The default threshold is **−45 dBFS**. If your voice is too quiet to trigger, try **−55**. If background conversation triggers the mic, try **−35**. Run either command from PowerShell in the project folder to open the mini display with your chosen threshold.
+Use **−** to pick up quieter speech or **+** to require a louder voice. Each click moves the gold marker by **1 dB** and changes the active window's trigger immediately. Both the live and test windows remember your last adjustment for the next launch.
+
+The initial threshold is **−45 dBFS**. To start a session at a specific value, pass `--threshold` from PowerShell.
 
 ```powershell
 .\Auto-C.cmd --display --dry-run --threshold -55

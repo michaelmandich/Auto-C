@@ -5,6 +5,7 @@ import tkinter as tk
 
 from auto_c import listen
 from monitor_position import place_window
+from threshold_settings import MAX_THRESHOLD, MIN_THRESHOLD, save_threshold
 
 
 BG = "#141a21"
@@ -64,8 +65,52 @@ def run_display(args):
     track = meter.create_rectangle(0, 4, 1, 10, fill=PANEL, outline="")
     bar = meter.create_rectangle(0, 4, 0, 10, fill=METER, outline="")
     marker = meter.create_line(0, 1, 0, 13, width=2, fill=THRESHOLD)
-    tk.Label(body, text=f"Threshold  {args.threshold:g} dBFS", bg=BG, fg=THRESHOLD,
-             font=("Segoe UI", 9), anchor="w").pack(fill="x")
+    controls = tk.Frame(body, bg=BG)
+    controls.pack(fill="x")
+    threshold_label = tk.Label(controls, bg=BG, fg=THRESHOLD, font=("Segoe UI", 9), anchor="w")
+    threshold_label.pack(side="left", fill="x", expand=True)
+    save_error = tk.Label(body, bg=BG, fg=THRESHOLD, font=("Segoe UI", 9), anchor="w",
+                          text="Change applied. Couldn’t save the setting.")
+
+    threshold = args.threshold
+    threshold_lock = threading.Lock()
+
+    def get_threshold():
+        with threshold_lock:
+            return threshold
+
+    def draw_marker():
+        width = max(1, meter.winfo_width() - 1)
+        fraction = (threshold - MIN_THRESHOLD) / (MAX_THRESHOLD - MIN_THRESHOLD)
+        threshold_x = min(width - 1, max(1, width * fraction))
+        meter.coords(marker, threshold_x, 1, threshold_x, 13)
+
+    def show_threshold():
+        threshold_label.configure(text=f"Threshold  {threshold:g} dBFS")
+        lower.configure(state="normal" if threshold > MIN_THRESHOLD else "disabled")
+        raise_button.configure(state="normal" if threshold < MAX_THRESHOLD else "disabled")
+        draw_marker()
+
+    def adjust_threshold(step):
+        nonlocal threshold
+        with threshold_lock:
+            threshold = max(MIN_THRESHOLD, min(MAX_THRESHOLD, threshold + step))
+        show_threshold()
+        try:
+            save_threshold(threshold)
+        except OSError:
+            save_error.pack(fill="x", pady=(4, 0))
+        else:
+            save_error.pack_forget()
+
+    button_style = dict(bg=PANEL, fg=TEXT, activebackground="#344451", activeforeground=TEXT,
+                        disabledforeground="#72818a", highlightcolor=THRESHOLD,
+                        highlightbackground=BG, highlightthickness=1, relief="flat", borderwidth=0,
+                        takefocus=True, width=3, font=("Segoe UI", 10, "bold"))
+    lower = tk.Button(controls, text="−", command=lambda: adjust_threshold(-1), **button_style)
+    lower.pack(side="left", padx=(0, 3))
+    raise_button = tk.Button(controls, text="+", command=lambda: adjust_threshold(1), **button_style)
+    raise_button.pack(side="left")
 
     def show_state(state):
         headline, subtitle, background, ink = STATES[state]
@@ -78,13 +123,13 @@ def run_display(args):
     def draw_level(level):
         width = max(1, meter.winfo_width() - 1)
         # Map the full configurable -96..0 dBFS scale to the meter.
-        threshold_x = min(width - 1, max(1, width * (args.threshold + 96) / 96))
         fill = 0 if level is None else width * min(1, max(0, (level + 96) / 96))
         meter.coords(track, 0, 4, width, 10)
         meter.coords(bar, 0, 4, fill, 10)
-        meter.coords(marker, threshold_x, 1, threshold_x, 13)
         reading.configure(text="— dBFS" if level is None else f"{max(-96, level):.0f} dBFS")
 
+    show_threshold()
+    meter.bind("<Configure>", lambda event: draw_marker())
     show_state("starting")
     root.update_idletasks()
     root.minsize(root.winfo_reqwidth(), root.winfo_reqheight())
@@ -104,7 +149,7 @@ def run_display(args):
     def capture():
         nonlocal failure
         try:
-            listen(args, stop.is_set, on_status=on_status)
+            listen(args, stop.is_set, on_status=on_status, get_threshold=get_threshold)
         except Exception as error:
             failure = str(error) or type(error).__name__
 
@@ -119,6 +164,8 @@ def run_display(args):
                 root.destroy()
             else:
                 show_state("error")
+                lower.configure(state="disabled")
+                raise_button.configure(state="disabled")
                 detail.configure(text=failure, wraplength=max(160, copy.winfo_width()), justify="left")
                 draw_level(None)
                 root.protocol("WM_DELETE_WINDOW", root.destroy)
