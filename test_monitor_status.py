@@ -1,0 +1,81 @@
+import unittest
+from contextlib import nullcontext
+from struct import pack
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import auto_c
+
+
+RATE = 16000
+SAMPLES = RATE * auto_c.FRAME_MS // 1000
+LOUD = pack("<hh", 16384, -16384) * (SAMPLES // 2)
+SILENCE = bytes(2 * SAMPLES)
+
+
+class FakeKey:
+    def __init__(self, focused=True, refuse_first=False):
+        self.focused = focused
+        self.refuse_first = refuse_first
+        self.down_attempts = 0
+        self.held = False
+
+    def eligible(self):
+        return self.focused
+
+    def set_down(self, down):
+        if down:
+            self.down_attempts += 1
+        self.held = down and not (self.refuse_first and self.down_attempts == 1)
+
+
+def replay(audio, key=None):
+    """Deliver exactly one PCM frame before each monitor iteration."""
+    frames = iter(audio)
+    reports = []
+    args = SimpleNamespace(device=None, threshold=-45, dry_run=key is None)
+    with (
+        patch.object(auto_c.sd, "query_devices", return_value={"index": 0, "name": "Test mic"}),
+        patch.object(auto_c, "capture_rate", return_value=RATE),
+        patch.object(auto_c.sd, "RawInputStream") as stream,
+        patch.object(auto_c.webrtcvad.Vad, "is_speech", return_value=True),
+        patch.object(auto_c, "live_session", nullcontext),
+        patch.object(auto_c, "LeagueKey", return_value=key) as create_key,
+    ):
+        def stopping():
+            frame = next(frames, None)
+            if frame is None:
+                return True
+            stream.call_args.kwargs["callback"](frame, SAMPLES, None, False)
+            return False
+
+        auto_c.listen(args, stopping, lambda state, dbfs: reports.append((state, dbfs)))
+        if args.dry_run:
+            create_key.assert_not_called()
+    return reports
+
+
+class MonitorStatusTests(unittest.TestCase):
+    def test_meter_tracks_input_while_waiting_for_league(self):
+        key = FakeKey(focused=False)
+        reports = replay([SILENCE, LOUD, LOUD], key)
+        self.assertEqual([state for state, _ in reports], ["waiting"] * 3)
+        self.assertEqual(reports[0][1], -96)
+        self.assertAlmostEqual(reports[1][1], -6.02, places=2)
+        self.assertEqual(key.down_attempts, 0)
+
+    def test_reports_only_successful_hold_and_releases_it_on_stop(self):
+        key = FakeKey(refuse_first=True)
+        reports = replay([LOUD, LOUD, LOUD], key)
+        self.assertEqual([state for state, _ in reports], ["ready", "ready", "key_down"])
+        self.assertEqual(key.down_attempts, 2)
+        self.assertFalse(key.held)
+
+    def test_dry_run_reports_speech_and_quiet_without_creating_a_key(self):
+        reports = replay([LOUD, LOUD] + [SILENCE] * 15)
+        self.assertEqual([state for state, _ in reports],
+                         ["test_quiet"] + ["test_speech"] * 15 + ["test_quiet"])
+
+
+if __name__ == "__main__":
+    unittest.main()
